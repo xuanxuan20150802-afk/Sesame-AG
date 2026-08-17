@@ -1,0 +1,58 @@
+name: Build Sesame-AG and Email Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  workflow_dispatch:
+
+jobs:
+  build-and-send:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies and build
+        run: |
+          npm ci
+          npm run build --if-present
+
+      - name: Archive build artifacts
+        run: |
+          if [ -d "dist" ]; then
+            zip -r release-artifacts.zip dist/
+          elif [ -d "build" ]; then
+            zip -r release-artifacts.zip build/
+          else
+            zip -r release-artifacts.zip . -x ".git/*" "node_modules/*"
+          fi
+
+      - name: Send mail with attachment
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: ${{ secrets.MAIL_SERVER }}
+          server_port: ${{ secrets.MAIL_PORT }}
+          username: ${{ secrets.MAIL_USERNAME }}
+          password: ${{ secrets.MAIL_PASSWORD }}
+          subject: "【自动构建成功】Sesame-AG 最新更新文件"
+          to: ${{ secrets.TO_EMAIL }}
+          from: "GitHub Actions <${{ secrets.MAIL_USERNAME }}>"
+          body: |
+            你好！
+
+            Sesame-AG 仓库已自动构建完成。
+            提交信息：${{ github.event.head_commit.message }}
+            提交版本：${{ github.sha }}
+
+            构建文件已作为 zip 附件随信发送，请查收！
+          secure: true
+          attachments: release-artifacts.zip
