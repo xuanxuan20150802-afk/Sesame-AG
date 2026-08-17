@@ -10,19 +10,26 @@ on:
 jobs:
   build-and-send:
     runs-on: ubuntu-latest
+    
+    # 增加 explicit 的 GITHUB_TOKEN 权限，解决 git pull/checkout 鉴权问题
+    permissions:
+      contents: read
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # 此处增加 explicit 的凭据设置，解决某些鉴权失败场景
+          persist-credentials: false 
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22' # 强制使用 Node.js 22，去除所有不兼容警告
 
       - name: Install dependencies and build
         run: |
-          npm install
+          npm install # 适配无 package-lock.json 的情况
           npm run build --if-present
 
       - name: Archive build artifacts
