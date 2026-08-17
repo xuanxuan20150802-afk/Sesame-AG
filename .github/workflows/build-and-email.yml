@@ -22,9 +22,6 @@ env:
   ASSET_DIR: app/build/outputs/apk/release-assets
   TARGET_SOURCE_BRANCH: dev
 
-  # 消除剩余Node版本弃用警告
-  ACTIONS_ALLOW_USE_UNSECURE_NODE_VERSION: true
-
 jobs:
   # 任务1：同步原仓库代码，检测是否有更新
   sync-upstream:
@@ -35,17 +32,17 @@ jobs:
       change_log: ${{ steps.check_update.outputs.change_log }}
     steps:
       - name: 检出仓库代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GH_PAT }}
+          token: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
           ref: dev
 
       - name: 配置Git用户信息
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git
+          git remote set-url origin https://x-access-token:${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
 
       - name: 添加原仓库上游地址
         run: |
@@ -60,11 +57,10 @@ jobs:
         id: check_update
         run: |
           BEFORE_SHA=$(git rev-parse HEAD)
-          git merge upstream/dev --no-edit -X theirs
+          git merge upstream/dev --no-edit -X theirs || exit 1
           AFTER_SHA=$(git rev-parse HEAD)
 
           if [ "$BEFORE_SHA" != "$AFTER_SHA" ]; then
-            # 修改提交信息，加上 [skip ci]，避免触发二次构建
             git commit --amend -m "Merge upstream/dev [skip ci]"
             AFTER_SHA=$(git rev-parse HEAD)
             
@@ -72,7 +68,6 @@ jobs:
 
             CHANGE_LOG=$(git log --oneline "${BEFORE_SHA}..${AFTER_SHA}")
 
-            # 多行输出写入GITHUB_OUTPUT
             {
               echo 'change_log<<CHANGE_LOG_EOF'
               echo "$CHANGE_LOG"
@@ -120,13 +115,12 @@ jobs:
         run: sudo timedatectl set-timezone Asia/Shanghai
 
       - name: 检出仓库代码
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          ref: dev
 
       - name: 安装JDK环境
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@v4
         with:
           distribution: ${{ env.JAVA_DISTRIBUTION }}
           java-version: ${{ env.JAVA_VERSION }}
@@ -135,9 +129,7 @@ jobs:
         run: echo "ORG_GRADLE_JAVA_HOME=${JAVA_HOME}" >> "$GITHUB_ENV"
 
       - name: 安装Android SDK工具
-        uses: android-actions/setup-android@v4
-        with:
-          packages: ""
+        uses: android-actions/setup-android@v3
 
       - name: 安装SDK组件并接受协议
         run: |
@@ -147,7 +139,7 @@ jobs:
           set -o pipefail
 
       - name: 配置Gradle缓存（加速构建）
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: wrapper
           cache-read-only: false
@@ -209,12 +201,10 @@ jobs:
 
           echo "build_time=$(date '+%Y-%m-%d %H:%M:%S')" >> $GITHUB_OUTPUT
 
-          # 获取原仓库 main 和 dev 分支的最新提交信息（永远显示原仓库的，不是我们自己的）
           git remote remove upstream 2>/dev/null || true
           git remote add upstream https://github.com/Sesame-AG/Sesame-AG.git
           git fetch upstream --quiet
           
-          # dev 分支
           DEV_SHA=$(git rev-parse --short upstream/dev)
           DEV_MSG=$(git log --oneline -1 upstream/dev | cut -d' ' -f2-)
           DEV_TIME=$(git log -1 --format="%ci" upstream/dev)
@@ -222,7 +212,6 @@ jobs:
           echo "dev_latest_commit_msg=${DEV_MSG}" >> $GITHUB_OUTPUT
           echo "dev_latest_commit_time=${DEV_TIME}" >> $GITHUB_OUTPUT
           
-          # main 分支
           MAIN_SHA=$(git rev-parse --short upstream/main)
           MAIN_MSG=$(git log --oneline -1 upstream/main | cut -d' ' -f2-)
           MAIN_TIME=$(git log -1 --format="%ci" upstream/main)
@@ -230,7 +219,6 @@ jobs:
           echo "main_latest_commit_msg=${MAIN_MSG}" >> $GITHUB_OUTPUT
           echo "main_latest_commit_time=${MAIN_TIME}" >> $GITHUB_OUTPUT
 
-      # ✅ 修复：用shell脚本生成Release说明文件，避免YAML多行字符串问题
       - name: 生成Release说明文件
         env:
           VERSION: ${{ steps.prepare_assets.outputs.version }}
@@ -288,12 +276,7 @@ jobs:
           > 安装完成后，请在LSPosed框架中激活模块并重启设备生效。
           BODY_EOF
 
-          echo "✅ Release说明文件已生成"
-          echo "--- 内容预览 ---"
-          cat release-body.md
-          echo "--- 预览结束 ---"
-
-      - name: 创建GitHub Release（所有APK单独展示 + 完整更新日志）
+      - name: 创建GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.prepare_assets.outputs.tag_name }}
@@ -324,19 +307,12 @@ jobs:
             exit 0
           fi
 
-          echo "🗑️ 共 $count 个版本，保留最近 $KEEP_LATEST 个，删除 $delete_count 个旧版本"
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-
           echo "$releases" | tail -n $delete_count | while read -r release_id tag_name; do
-            echo "  删除版本: $tag_name" >> "$GITHUB_STEP_SUMMARY"
             curl -s -f -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
               "https://api.github.com/repos/$REPO/releases/$release_id" || true
             curl -s -f -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
               "https://api.github.com/repos/$REPO/git/refs/tags/$tag_name" || true
           done
-
-          echo "" >> "$GITHUB_STEP_SUMMARY"
-          echo "✅ 旧版本清理完成" >> "$GITHUB_STEP_SUMMARY"
 
   # 任务3：发送邮件通知（带完整更新日志）
   notify-email:
@@ -344,7 +320,6 @@ jobs:
     needs: [ sync-upstream, build-and-sign ]
     if: ${{ always() && needs.build-and-sign.result != 'skipped' }}
     steps:
-      # ✅ 修复：用shell脚本生成邮件内容，避免YAML多行字符串问题
       - name: 生成邮件内容
         id: gen_email
         env:
@@ -393,16 +368,6 @@ jobs:
               echo "❌ Sesame-AG 构建流程出现失败，请查看详情排查。"
               echo ""
               echo "🔗 错误日志：${SERVER_URL}/${REPOSITORY}/actions/runs/${RUN_ID}"
-              echo ""
-              echo "🚨 常见失败原因"
-              echo "1. 配置文件语法错误"
-              echo "2. 依赖下载失败（网络问题）"
-              echo "3. 签名密钥配置错误"
-              echo "4. 原仓库代码变更导致编译失败"
-              echo ""
-              echo "🔧 排查建议"
-              echo "点击上方链接进入构建详情，查看红色报错步骤的具体日志"
-              echo "若为网络问题，点击右上角「Re-run jobs」重新执行即可"
             } > email-body.txt
           fi
 
@@ -415,10 +380,9 @@ jobs:
           fi
 
           echo "subject=${SUBJECT}" >> "$GITHUB_OUTPUT"
-          echo "✅ 邮件内容已生成"
 
       - name: 发送构建结果邮件
-        uses: dawidd6/action-send-mail@v6
+        uses: dawidd6/action-send-mail@v3
         with:
           server_address: smtp.qq.com
           server_port: 465
@@ -439,5 +403,4 @@ jobs:
         run: |
           echo "## ❌ 构建执行失败" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "请点击左侧失败的任务步骤，查看红色报错的详细日志信息。" >> $GITHUB_STEP_SUMMARY
-          echo "若为网络/临时环境问题，可点击右上角「Re-run all jobs」重试。" >> $GITHUB_STEP_SUMMARY
+          echo "请检查相关配置项（如 Secrets 设置）后再试。" >> $GITHUB_STEP_SUMMARY
