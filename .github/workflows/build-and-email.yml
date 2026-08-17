@@ -10,28 +10,27 @@ on:
 jobs:
   build-and-send:
     runs-on: ubuntu-latest
-    
-    # 增加 explicit 的 GITHUB_TOKEN 权限，解决 git pull/checkout 鉴权问题
-    permissions:
-      contents: read
 
     steps:
+      # 1. 禁用 submodules 拉取，避免因 .gitmodules 损坏导致 git exit code 128
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # 此处增加 explicit 的凭据设置，解决某些鉴权失败场景
-          persist-credentials: false 
+          submodules: false
 
+      # 2. 设置 Node.js 环境
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22' # 强制使用 Node.js 22，去除所有不兼容警告
+          node-version: '22'
 
+      # 3. 安装依赖并执行构建
       - name: Install dependencies and build
         run: |
-          npm install # 适配无 package-lock.json 的情况
+          npm install
           npm run build --if-present
 
+      # 4. 打包产物
       - name: Archive build artifacts
         run: |
           if [ -d "dist" ]; then
@@ -42,6 +41,7 @@ jobs:
             zip -r release-artifacts.zip . -x ".git/*" "node_modules/*"
           fi
 
+      # 5. 发送邮件
       - name: Send mail with attachment
         uses: dawidd6/action-send-mail@v3
         with:
